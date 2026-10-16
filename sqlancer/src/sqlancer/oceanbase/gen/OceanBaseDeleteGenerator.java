@@ -1,0 +1,48 @@
+package sqlancer.oceanbase.gen;
+
+import java.util.Arrays;
+
+import sqlancer.Randomly;
+import sqlancer.common.gen.AbstractDeleteGenerator;
+import sqlancer.common.query.SQLQueryAdapter;
+import sqlancer.oceanbase.OceanBaseErrors;
+import sqlancer.oceanbase.OceanBaseGlobalState;
+import sqlancer.oceanbase.OceanBaseSchema.OceanBaseTable;
+import sqlancer.oceanbase.OceanBaseVisitor;
+
+public class OceanBaseDeleteGenerator extends AbstractDeleteGenerator {
+
+    private final OceanBaseGlobalState globalState;
+    private final Randomly r;
+
+    public OceanBaseDeleteGenerator(OceanBaseGlobalState globalState) {
+        this.globalState = globalState;
+        this.r = globalState.getRandomly();
+    }
+
+    public static SQLQueryAdapter delete(OceanBaseGlobalState globalState) {
+        return new OceanBaseDeleteGenerator(globalState).getStatement();
+    }
+
+    @Override
+    public void buildStatement() {
+        OceanBaseTable randomTable = globalState.getSchema().getRandomTable();
+        OceanBaseExpressionGenerator gen = new OceanBaseExpressionGenerator(globalState)
+                .setColumns(randomTable.getColumns());
+        sb.append("DELETE");
+        if (Randomly.getBoolean()) {
+            sb.append(" /*+parallel(" + r.getLong(0, 10) + ") enable_parallel_dml*/ ");
+        }
+        sb.append(" FROM ");
+        sb.append(randomTable.getName());
+        if (Randomly.getBoolean()) {
+            appendWhereClause(OceanBaseVisitor.asString(gen.generateExpression()));
+            OceanBaseErrors.addExpressionErrors(errors);
+        }
+        errors.addAll(Arrays.asList("doesn't have this option", "Truncated incorrect DOUBLE value",
+                "Truncated incorrect INTEGER value", "Truncated incorrect DECIMAL value",
+                "Data truncated for functional index", "Incorrect value", "Out of range value for column",
+                "Data truncation:"));
+    }
+
+}

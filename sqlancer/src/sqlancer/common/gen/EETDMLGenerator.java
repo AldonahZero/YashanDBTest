@@ -1,0 +1,388 @@
+package sqlancer.common.gen;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+
+import sqlancer.common.ast.newast.Expression;
+import sqlancer.common.oracle.EETTransformer;
+import sqlancer.common.schema.AbstractTable;
+import sqlancer.common.schema.AbstractTableColumn;
+import sqlancer.common.schema.AbstractTables;
+
+/**
+ * Generator interface used by {@link sqlancer.common.oracle.EETDMLOracle}, the DML counterpart of {@link EETGenerator}.
+ * It supplies methods which generate the transformable expressions, create the DBMS-specific {@link EETTransformer}
+ * that rewrites them, and produce the SQL of the statements the oracle uses to observe the database state a statement
+ * produces (an approach drawn from the DQE oracle).
+ *
+ * <p>
+ * Adapted from the DQE oracle, state is observed with an auxiliary column ({@link EETDMLGenerator#ROW_ID_COLUMN}) which
+ * uniquely identifies each row. The rows are stamped with identifiers once, before both executions of the statement run
+ * (each in a rolled-back transaction), so both executions observe the same identifiers. The resulting state is compared
+ * as a full post-image (each surviving row's identifier and content column values), which covers any of the three DML
+ * statements (DELETE, UPDATE, INSERT).
+ *
+ * <p>
+ * Most of these statements are standard SQL, likely common to most DBMSs, so are provided as {@code default} methods.
+ *
+ * @param <E>
+ *            the DBMS-specific expression class
+ * @param <T>
+ *            the DBMS-specific table class
+ * @param <C>
+ *            the DBMS-specific column class
+ */
+public interface EETDMLGenerator<E extends Expression<C>, T extends AbstractTable<C, ?, ?>, C extends AbstractTableColumn<?, ?>> {
+
+    /** Name of the auxiliary column that uniquely identifies each row. */
+    String ROW_ID_COLUMN = "rowid";
+
+    /**
+     * Restricts this generator to the given tables (the table the DML statement modifies, and any tables joined onto
+     * it) and their columns.
+     *
+     * @param tables
+     *            the tables (and, implicitly, columns) the generated statement operates on
+     *
+     * @return this generator
+     */
+    EETDMLGenerator<E, T, C> setTablesAndColumns(AbstractTables<T, C> tables);
+
+    /**
+     * Generates random join clauses attaching a non-empty subset of {@code candidateTables} to {@code targetTable}, and
+     * widens this generator's scope to the joined tables, so subsequently generated expressions may reference their
+     * columns as well as {@code targetTable}'s.
+     *
+     * <p>
+     * Only the target table's rows are modified, so the joined tables are read-only: they need neither the auxiliary
+     * row-identifier column nor a post-image of their own. The oracle narrows the scope back to {@code targetTable}
+     * before generating the values an UPDATE writes, because a joined row is only well defined for the WHERE predicate:
+     * when a target row matches several joined rows, it is still updated once, with the value computed from an
+     * unspecified one of them, so a written value that referenced a joined column would not be deterministic.
+     *
+     * @param targetTable
+     *            the table the statement modifies, which the joins are attached to
+     * @param candidateTables
+     *            the other tables available to join; must be non-empty and must not contain {@code targetTable}, which
+     *            a join clause would have to alias to reference twice
+     *
+     * @return the rendered join clauses, non-empty and ready to follow {@code targetTable}'s name in a FROM clause
+     */
+    String generateJoinClauses(T targetTable, List<T> candidateTables);
+
+    /**
+     * Generates a fresh random boolean expression over the current tables' columns, used as the DML statement's WHERE
+     * predicate.
+     *
+     * @return a fresh random boolean expression
+     */
+    E generateBooleanExpression();
+
+    /**
+     * Generates a fresh set of {@code column = value} assignments over the current tables' columns, used as an UPDATE
+     * statement's SET clause. The columns are a random non-empty subset and each value is a fresh random expression;
+     * both the columns and their assigned expressions are transformed by the oracle.
+     *
+     * @return the assignments, as {@code (column, value expression)} pairs (at least one)
+     */
+    List<Map.Entry<C, E>> generateSetAssignments();
+
+    /**
+     * Generates a fresh value expression for each content column of the current table, used as an INSERT statement's
+     * inserted values. The returned expressions are positionally aligned with {@link AbstractTable#getColumns()}, and
+     * each is transformed by the oracle.
+     *
+     * @return one fresh random value expression per content column, in {@link AbstractTable#getColumns()} order
+     */
+    List<E> generateInsertValues();
+
+    /**
+     * Creates a DBMS-specific {@link EETTransformer} backed by this generator, used to rewrite the statement's
+     * expressions into semantically equivalent ones.
+     *
+     * @return a DBMS-specific {@link EETTransformer}
+     */
+    EETTransformer<E, ?> createTransformer();
+
+    // --- DBMS-specific primitives ---
+
+    /**
+     * Renders an expression to its DBMS-specific SQL string.
+     *
+     * @param expr
+     *            the expression to render
+     *
+     * @return the SQL text of {@code expr}
+     */
+    String asString(E expr);
+
+    /**
+     * SQL that assigns every existing row of {@code table} a distinct, stable identifier in the {@link #ROW_ID_COLUMN}
+     * column. For example, a 36-character UUID string.
+     *
+     * @param table
+     *            the table whose rows are stamped
+     *
+     * @return the SQL statement
+     */
+    String stampRowIdsStatement(T table);
+
+    /**
+     * The SQL type of the auxiliary {@link #ROW_ID_COLUMN} column. It must be able to hold the identifiers that
+     * {@link #stampRowIdsStatement} produces, so it belongs with that statement as the other half of the row-id
+     * representation. For example, {@code VARCHAR(36)} would fit a 36-character UUID string.
+     *
+     * @return the column type
+     */
+    String rowIdColumnType();
+
+    /**
+     * A SQL expression, evaluated once per source row of an {@code INSERT ... SELECT}, that derives the inserted row's
+     * {@link #ROW_ID_COLUMN} value from the source row's identifier. It must be deterministic (so both the original and
+     * transformed statements assign the same identifiers), unique per source row, and distinct from every existing
+     * identifier (so an inserted row never collides with the source row it was derived from in the post-image). DBMS-
+     * specific because it names a suitable derivation function (e.g. a hash of the source identifier).
+     *
+     * @return the SQL expression deriving an inserted row's identifier from the source row's {@link #ROW_ID_COLUMN}
+     */
+    String insertedRowIdExpression();
+
+    // --- Standard-SQL statements (override only where the DBMS's dialect differs) ---
+
+    /**
+     * SQL that adds the auxiliary {@link #ROW_ID_COLUMN} column to {@code table}, typed as {@link #rowIdColumnType}.
+     *
+     * @param table
+     *            the table to add the column to
+     *
+     * @return the SQL statement
+     */
+    default String addRowIdColumnStatement(T table) {
+        return "ALTER TABLE " + table.getName() + " ADD COLUMN " + ROW_ID_COLUMN + " " + rowIdColumnType();
+    }
+
+    /**
+     * SQL that drops the auxiliary {@link #ROW_ID_COLUMN} column from {@code table}.
+     *
+     * @param table
+     *            the table to drop the column from
+     *
+     * @return the SQL statement
+     */
+    default String dropRowIdColumnStatement(T table) {
+        return "ALTER TABLE " + table.getName() + " DROP COLUMN " + ROW_ID_COLUMN;
+    }
+
+    /**
+     * SQL that reads back the full post-image of {@code table}: the {@link #ROW_ID_COLUMN} identifier and every content
+     * column of every surviving row, ordered by the (unique) identifier so the two statements' snapshots align
+     * row-for-row.
+     *
+     * <p>
+     * This single value-level snapshot is the comparison surface for all DML statements: a DELETE removes rows from it,
+     * an UPDATE changes column values in it, an INSERT adds rows to it. Row identity alone (which the identifier
+     * already captures) would suffice for DELETE, but not for UPDATE, where the two runs could touch the same rows yet
+     * write different values.
+     *
+     * @param table
+     *            the table to snapshot
+     *
+     * @return the SQL statement; its result columns are those of {@link #postImageColumns}, in that order
+     */
+    default String selectPostImageStatement(T table) {
+        return "SELECT " + String.join(", ", postImageColumns(table)) + " FROM " + table.getName() + " ORDER BY "
+                + ROW_ID_COLUMN;
+    }
+
+    /**
+     * The columns a post-image row consists of, in the order {@link #selectPostImageStatement} returns them: the
+     * {@link #ROW_ID_COLUMN} identifier followed by {@code table}'s content columns. This is the sole definition of the
+     * post-image layout, so a consumer can find the identifier's position by looking up {@link #ROW_ID_COLUMN} here
+     * rather than assuming one.
+     *
+     * @param table
+     *            the table being snapshot
+     *
+     * @return the post-image column names, in order
+     */
+    default List<String> postImageColumns(T table) {
+        List<String> columns = new ArrayList<>();
+        columns.add(ROW_ID_COLUMN);
+        for (C column : table.getColumns()) {
+            columns.add(column.getName());
+        }
+        return columns;
+    }
+
+    /**
+     * SQL that deletes the rows of {@code table} matching {@code predicate}, optionally joined to further tables (see
+     * {@link #generateJoinClauses}) and optionally limited to the first {@code limit} rows (see
+     * {@link #orderByLimitClause}).
+     *
+     * <p>
+     * With joins, the multi-table form is used: the table named before FROM is the only one rows are deleted from,
+     * while the joined tables merely widen what the predicate can reference. That form admits neither ORDER BY nor
+     * LIMIT, so {@code limit} must be null whenever {@code joinClauses} is non-empty.
+     *
+     * @param table
+     *            the table to delete from
+     * @param joinClauses
+     *            the join clauses to attach to {@code table}, or the empty string for a single-table statement
+     * @param predicate
+     *            the WHERE predicate; rendered via {@link #asString}
+     * @param orderByColumns
+     *            the columns to order by before the row-id tiebreaker (may be empty); only used when {@code limit} is
+     *            non-null
+     * @param limit
+     *            the maximum number of rows to delete, or {@code null} for no limit
+     *
+     * @return the SQL statement
+     */
+    default String deleteStatement(T table, String joinClauses, E predicate, List<C> orderByColumns, Integer limit) {
+        if (joinClauses.isEmpty()) {
+            return "DELETE FROM " + table.getName() + " WHERE " + asString(predicate)
+                    + orderByLimitClause(orderByColumns, limit);
+        }
+        return "DELETE " + table.getName() + " FROM " + table.getName() + joinClauses + " WHERE " + asString(predicate);
+    }
+
+    /**
+     * SQL that updates the rows of {@code table} matching {@code predicate}, setting each column in {@code assignments}
+     * to its assigned value expression, optionally joined to further tables (see {@link #generateJoinClauses}) and
+     * optionally limited to the first {@code limit} rows (see {@link #orderByLimitClause}).
+     *
+     * <p>
+     * With joins, the multi-table form is used: only {@code table}'s columns are assigned, so it is the only table
+     * modified, while the joined tables merely widen what the predicate can reference. The assigned columns are then
+     * qualified, as a joined table may hold a column of the same name, and the form admits neither ORDER BY nor LIMIT,
+     * so {@code limit} must be null whenever {@code joinClauses} is non-empty.
+     *
+     * @param table
+     *            the table to update
+     * @param joinClauses
+     *            the join clauses to attach to {@code table}, or the empty string for a single-table statement
+     * @param assignments
+     *            the {@code (column, value expression)} pairs to assign; each value is rendered via {@link #asString}
+     * @param predicate
+     *            the WHERE predicate; rendered via {@link #asString}
+     * @param orderByColumns
+     *            the columns to order by before the row-id tiebreaker (may be empty); only used when {@code limit} is
+     *            non-null
+     * @param limit
+     *            the maximum number of rows to update, or {@code null} for no limit
+     *
+     * @return the SQL statement
+     */
+    default String updateStatement(T table, String joinClauses, List<Map.Entry<C, E>> assignments, E predicate,
+            List<C> orderByColumns, Integer limit) {
+        List<String> setClauses = new ArrayList<>();
+        for (Map.Entry<C, E> assignment : assignments) {
+            String columnName = joinClauses.isEmpty() ? assignment.getKey().getName()
+                    : assignment.getKey().getFullQualifiedName();
+            setClauses.add(columnName + " = " + asString(assignment.getValue()));
+        }
+        // The trailing clause is empty for a multi-table statement, whose limit is always null.
+        return "UPDATE " + table.getName() + joinClauses + " SET " + String.join(", ", setClauses) + " WHERE "
+                + asString(predicate) + orderByLimitClause(orderByColumns, limit);
+    }
+
+    /**
+     * SQL that inserts a new row into {@code table} for each source row (optionally filtered by {@code predicate}),
+     * setting each content column to its corresponding value in {@code values}, optionally limited to the first
+     * {@code limit} source rows (see {@link #orderByLimitClause}).
+     *
+     * <p>
+     * The {@code INSERT ... SELECT} form is used rather than {@code INSERT ... VALUES} because it reuses the source-row
+     * model already shared by {@link #deleteStatement} and {@link #updateStatement}, and because it offers two kinds of
+     * transformable expression in one statement (the inserted values and the WHERE predicate) rather than the values
+     * alone. Each inserted row's {@link #ROW_ID_COLUMN} is derived from its source row via
+     * {@link #insertedRowIdExpression()}, giving it a deterministic identifier that is unique and distinct from every
+     * existing one, so the two statements' post-images align (and inserted rows never collide with their source rows).
+     *
+     * <p>
+     * The source is {@code table} alone, so this statement takes no join clauses: joining the source would let one
+     * source row produce several inserted rows, which {@link #insertedRowIdExpression()} could no longer tell apart.
+     *
+     * @param table
+     *            the table to insert into
+     * @param values
+     *            one value expression per content column, positionally aligned with {@link AbstractTable#getColumns()};
+     *            each is rendered via {@link #asString}
+     * @param predicate
+     *            the WHERE predicate filtering the source rows, or {@code null} to insert from every source row;
+     *            rendered via {@link #asString}
+     * @param orderByColumns
+     *            the columns to order the source rows by before the row-id tiebreaker (may be empty); only used when
+     *            {@code limit} is non-null
+     * @param limit
+     *            the maximum number of source rows to insert from, or {@code null} for no limit
+     *
+     * @return the SQL statement
+     */
+    default String insertStatement(T table, List<E> values, E predicate, List<C> orderByColumns, Integer limit) {
+        List<String> columnNames = new ArrayList<>();
+        columnNames.add(ROW_ID_COLUMN);
+        List<String> selectItems = new ArrayList<>();
+        selectItems.add(insertedRowIdExpression());
+        List<C> columns = table.getColumns();
+        for (int i = 0; i < columns.size(); i++) {
+            columnNames.add(columns.get(i).getName());
+            selectItems.add(asString(values.get(i)));
+        }
+        String statement = "INSERT INTO " + table.getName() + " (" + String.join(", ", columnNames) + ") SELECT "
+                + String.join(", ", selectItems) + " FROM " + table.getName();
+        if (predicate != null) {
+            statement += " WHERE " + asString(predicate);
+        }
+        return statement + orderByLimitClause(orderByColumns, limit);
+    }
+
+    /**
+     * Renders the trailing {@code ORDER BY ... LIMIT n} clause shared by {@link #deleteStatement},
+     * {@link #updateStatement} and {@link #insertStatement}, or the empty string when {@code limit} is null.
+     *
+     * <p>
+     * The rows are ordered by {@code orderByColumns} followed by {@link #ROW_ID_COLUMN} as a tiebreaker. Because the
+     * identifiers are unique, this is always a total order (even when the ordering columns tie), so the "first
+     * {@code limit}" rows are identical for the original and transformed statements. Varying the ordering columns
+     * exercises more access paths than the row id alone would. The caller must pass the same {@code orderByColumns} and
+     * {@code limit} to both statements; neither is transformed.
+     *
+     * @param orderByColumns
+     *            the columns to order by before the row-id tiebreaker (may be empty)
+     * @param limit
+     *            the maximum number of rows, or {@code null} for no limit (yielding an empty clause)
+     *
+     * @return the {@code ORDER BY ... LIMIT n} clause, or the empty string when {@code limit} is null
+     */
+    default String orderByLimitClause(List<C> orderByColumns, Integer limit) {
+        if (limit == null) {
+            return "";
+        }
+        List<String> orderBy = new ArrayList<>();
+        for (C column : orderByColumns) {
+            orderBy.add(column.getName());
+        }
+        orderBy.add(ROW_ID_COLUMN); // unique tiebreaker: guarantees a total order regardless of the columns above
+        return " ORDER BY " + String.join(", ", orderBy) + " LIMIT " + limit;
+    }
+
+    /**
+     * SQL that starts a transaction, so a statement's effect can be observed and then undone.
+     *
+     * @return the SQL statement
+     */
+    default String beginTransactionStatement() {
+        return "BEGIN";
+    }
+
+    /**
+     * SQL that rolls the current transaction back, undoing the statement's effect.
+     *
+     * @return the SQL statement
+     */
+    default String rollbackTransactionStatement() {
+        return "ROLLBACK";
+    }
+}

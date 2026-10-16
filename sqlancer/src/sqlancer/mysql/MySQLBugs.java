@@ -1,0 +1,52 @@
+package sqlancer.mysql;
+
+// do not make the fields final to avoid warnings
+public final class MySQLBugs {
+
+    // https://bugs.mysql.com/99182 BETWEEN malfunctions for DECIMAL and TEXT
+    public static boolean bug99182 = true;
+
+    // https://bugs.mysql.com/bug.php?id=99183
+    public static boolean bug99183 = true;
+
+    // https://bugs.mysql.com/bug.php?id=95894
+    public static boolean bug95894 = true;
+
+    // https://bugs.mysql.com/bug.php?id=99135
+    public static boolean bug99135 = true;
+
+    // https://bugs.mysql.com/bug.php?id=111471
+    public static boolean bug111471 = true;
+
+    // https://bugs.mysql.com/bug.php?id=112242
+    public static boolean bug112242 = true;
+
+    // https://bugs.mysql.com/bug.php?id=112243
+    public static boolean bug112243 = true;
+
+    // https://bugs.mysql.com/bug.php?id=112264
+    public static boolean bug112264 = true;
+
+    // https://bugs.mysql.com/bug.php?id=114533
+    public static boolean bug114533 = true;
+
+    // https://bugs.mysql.com/bug.php?id=114534
+    public static boolean bug114534 = true;
+
+    // https://bugs.mysql.com/bug.php?id=120710
+    // Inserting a NULL and a value which rounds to 0 into a DECIMAL column causes result set mismatch.
+    public static boolean bug120710 = true;
+
+    // https://bugs.mysql.com/bug.php?id=120711
+    // Creating an index on an integer-type column, then inserting a value which rounds to 1, causes result set
+    // mismatch.
+    public static boolean bug120711 = true;
+
+    // https://bugs.mysql.com/bug.php?id=120712
+    // Creating an index in between two NULL inserts causes inconsistent CERT result.
+    public static boolean bug120712 = true;
+
+    private MySQLBugs() {
+    }
+
+}

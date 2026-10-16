@@ -1,0 +1,22 @@
+[Unit]
+Description=YashanDB SQLancer TLP seven day campaign
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/YashanDBTest
+Environment=PYTHONUNBUFFERED=1
+Environment=TZ=Asia/Shanghai
+ExecStartPre=/usr/bin/python3 /root/YashanDBTest/scripts/ensure_database.py
+ExecStart=/usr/bin/python3 -u /root/YashanDBTest/scripts/campaign.py --days 7 --workers 2
+Restart=on-failure
+RestartSec=30
+KillMode=control-group
+TimeoutStopSec=45
+Nice=10
+StandardOutput=append:/root/YashanDBTest/logs/tlp-7d.log
+StandardError=append:/root/YashanDBTest/logs/tlp-7d.log
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,74 @@
+[
+  {
+    "name": "fixture_rows",
+    "sql": "SELECT COUNT(*) FROM t0",
+    "expected": 5,
+    "actual": 5
+  },
+  {
+    "name": "predicate_true",
+    "sql": "SELECT COUNT(*) FROM t0 WHERE c1 > 0",
+    "expected": 2,
+    "actual": 2
+  },
+  {
+    "name": "predicate_false",
+    "sql": "SELECT COUNT(*) FROM t0 WHERE NOT(c1 > 0)",
+    "expected": 1,
+    "actual": 1
+  },
+  {
+    "name": "predicate_unknown",
+    "sql": "SELECT COUNT(*) FROM t0 WHERE CASE WHEN (c1 > 0) THEN 0 WHEN NOT(c1 > 0) THEN 0 ELSE 1 END = 1",
+    "expected": 2,
+    "actual": 2
+  },
+  {
+    "name": "compound_unknown",
+    "sql": "SELECT COUNT(*) FROM t0 WHERE CASE WHEN (c1 > 0 OR c0 > 0) THEN 0 WHEN NOT(c1 > 0 OR c0 > 0) THEN 0 ELSE 1 END = 1",
+    "expected": 2,
+    "actual": 2
+  },
+  {
+    "name": "norec",
+    "sql": "SELECT COALESCE(SUM(CASE WHEN c1 > 0 THEN 1 ELSE 0 END),0) FROM t0",
+    "expected": 2,
+    "actual": 2
+  },
+  {
+    "name": "typed_nullif",
+    "sql": "SELECT COUNT(*) FROM t0 WHERE COALESCE(NULLIF(c0,c0),0)=0",
+    "expected": 5,
+    "actual": 5
+  },
+  {
+    "name": "empty_count",
+    "sql": "SELECT COUNT(*) FROM t2 WHERE c0 > 0",
+    "expected": 0,
+    "actual": 0
+  },
+  {
+    "name": "empty_norec",
+    "sql": "SELECT COALESCE(SUM(CASE WHEN c0 > 0 THEN 1 ELSE 0 END),0) FROM t2",
+    "expected": 0,
+    "actual": 0
+  },
+  {
+    "name": "left_join_rows",
+    "sql": "SELECT COUNT(*) FROM t0 LEFT JOIN t1 ON t0.c0=t1.c0",
+    "expected": 7,
+    "actual": 7
+  },
+  {
+    "name": "left_join_unmatched",
+    "sql": "SELECT COUNT(*) FROM t0 LEFT JOIN t1 ON t0.c0=t1.c0 WHERE t1.c0 IS NULL",
+    "expected": 3,
+    "actual": 3
+  },
+  {
+    "name": "left_join_norec",
+    "sql": "SELECT COALESCE(SUM(CASE WHEN t1.c0 IS NULL THEN 1 ELSE 0 END),0) FROM t0 LEFT JOIN t1 ON t0.c0=t1.c0",
+    "expected": 3,
+    "actual": 3
+  }
+]
